@@ -1,0 +1,49 @@
+[project]
+name = "uplift"
+version = "0.1.0"
+description = "UPLiFT: Efficient Pixel-Dense Feature Upsampling with Local Attenders"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Matthew Walmer"},
+    {name = "Saksham Suri"},
+    {name = "Anirud Aggarwal"},
+    {name = "Abhinav Shrivastava"},
+]
+keywords = ["deep-learning", "computer-vision", "feature-upsampling"]
+
+dependencies = [
+    "torch>=2.0",
+    "huggingface_hub",
+    "omegaconf",
+    "safetensors",
+    "pillow",
+    "torchvision",
+]
+
+[project.optional-dependencies]
+vit = ["timm>=1.0.24"]
+sd-vae = [
+    "diffusers>=0.25",
+    "transformers>=4.30",
+]
+all = [
+    "timm>=1.0.24",
+    "diffusers>=0.25",
+    "transformers>=4.30",
+    "torchmetrics",
+    "opencv-python",
+    "natsort",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["uplift*"]
+
+[tool.setuptools.package-data]
+uplift = ["configs/*.yaml"]
