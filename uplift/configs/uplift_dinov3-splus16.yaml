@@ -1,0 +1,119 @@
+description: "UPLiFT model for DINOv3-S+/16 model features, trained on ImageNet"
+
+# ===== DATASET =====
+data:
+  # dataset name
+  dataset: imagenet
+  # folder of val images to run between epochs for visualizations
+  val_imgs: null
+  # cache dir for saving/loading backbone latents
+  cache_dir: null
+
+# ===== BACKBONE =====
+backbone:
+  # backbone feature info
+  channel: 384
+  patch: 16
+  stride: 16
+  # backbone setting for Hugging Face diffusion pipeline extractors
+  diff_pipe_name: null
+  # backbone setting for ViT backbone extractors
+  model_type: vit_small_plus_patch16_dinov3.lvd1689m
+
+# ===== UPLiFT =====
+uplift:
+  # upscaling factor for the overall model
+  up_factor: 2
+  # Local Attender neighborhood size
+  attender: 17
+  # encoder share - use a single encoder pass for all upsampling steps
+  enc_share: True
+  # --- ENCODER SETTINGS ---
+  encoder:
+    # how many downsampling steps
+    down_steps: 4
+    # downsampling and processing blocks
+    block_0:
+      block: SingleConv
+      norm: batch
+      count: 1
+      hc: [16]
+    down_1:
+      down_op: none
+      factor: 1.0
+      residual: none
+    block_1:
+      block: SingleConv
+      norm: batch
+      count: 1
+      hc: [32]
+    down_2:
+      down_op: none
+      factor: 1.0
+      residual: none
+    block_2:
+      block: SingleConv
+      norm: batch
+      count: 1
+      hc: [64]
+    down_3:
+      down_op: none
+      factor: 1.0
+      residual: none
+    block_3:
+      block: SingleConv
+      norm: batch
+      count: 1
+      hc: [128]
+    down_4:
+      down_op: none
+      factor: 1.0
+      residual: none
+    block_4:
+      block: SingleConv
+      norm: batch
+      count: 1
+      hc: [128]
+  # --- DECODER/UPSCALER SETTINGS ---
+  decoder:
+    # how many upsampling steps
+    up_steps: 1
+    # (optional) noise channel concatentation for VAE UPLiFT
+    ncat_c: 0 # no noise channels
+    ncat_s: 1
+    # encoder connection resampling mode, for encoder share mode
+    enc_resample: nearest
+    # upsampling and processing blocks
+    block_0:
+      block: DoubleConv
+      norm: batch
+      count: 1
+      hc: [64]
+    up_1:
+      up_op: tconv
+      factor: 2
+      residual: bilinear
+    block_1:
+      block: DoubleConv
+      norm: batch
+      count: 1
+      hc: [64]
+
+# ===== TRAINING =====
+train:
+  imsize: 448
+  loss: l2
+  lr: 0.001
+  epochs: 1
+  save_every: 1
+  batch_size: 32
+  # keep the n most recent checkpoints (-1 to keep all)
+  keep_n: -1
+  # how many downsampling/upsampling levels to include in training
+  down_steps: 2
+  # train with only the deepest step/depth
+  only_deepest: False
+  # run iterative steps during training
+  multi_step: True
+  # latent-space noising augmentation: adds random Gaussian noise of specified magnitude to latents before UPLiFT module
+  lat_aug: 0

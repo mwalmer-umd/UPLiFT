@@ -1,0 +1,136 @@
+description: "UPLiFT model for SD1.5's VAE encoder features, trained on Unsplash-Lite"
+
+# ===== DATASET =====
+data:
+  # dataset name
+  dataset: unsplash_lite
+  # folder of val images to run between epochs for visualizations
+  val_imgs: null
+  # cache dir for saving/loading backbone latents
+  cache_dir: null
+
+# ===== BACKBONE =====
+backbone:
+  # backbone feature info
+  channel: 4
+  patch: 8
+  stride: 8
+  # backbone setting for Hugging Face diffusion pipeline extractors
+  diff_pipe_name: stable-diffusion-v1-5/stable-diffusion-v1-5
+  # backbone setting for ViT backbone extractors
+  model_type: null
+
+# ===== UPLiFT =====
+uplift:
+  # upscaling factor for the overall lift module
+  up_factor: 2
+  # no UPLiFT Encoder Preprocessing mode, take the raw image as input to the UPLiFT encoder
+  no_UEP: True
+  # Local Attender neighborhood size
+  attender: 17
+  # encoder share - use a single encoder pass for all upsampling steps
+  enc_share: True
+  # --- ENCODER SETTINGS ---
+  encoder:
+    # how many downsampling steps
+    down_steps: 4
+    # downsampling and processing blocks
+    block_0:
+      block: SingleConv
+      norm: layer
+      count: 2
+      hc: [64, 64]
+    down_1:
+      down_op: none
+      factor: 1.0
+      residual: none
+    block_1:
+      block: SingleConv
+      norm: layer
+      count: 2
+      hc: [128, 128]
+    down_2:
+      down_op: none
+      factor: 1.0
+      residual: none
+    block_2:
+      block: SingleConv
+      norm: layer
+      count: 2
+      hc: [256, 256]
+    down_3:
+      down_op: none
+      factor: 1.0
+      residual: none
+    block_3:
+      block: SingleConv
+      norm: layer
+      count: 2
+      hc: [512, 512]
+    down_4:
+      down_op: none
+      factor: 1.0
+      residual: none
+    block_4:
+      block: SingleConv
+      norm: layer
+      count: 2
+      hc: [512, 512]
+  # --- DECODER/UPSCALER SETTINGS ---
+  decoder:
+    # how many upsampling steps
+    up_steps: 1
+    # (optional) noise channel concatentation for VAE UPLiFT
+    ncat_c: 4
+    ncat_s: 1
+    # encoder connection resampling mode, for encoder share mode
+    enc_resample: nearest
+    # upsampling and processing blocks
+    block_0:
+      block: SingleConv
+      norm: layer
+      count: 1
+      hc: [512]
+    up_1:
+      up_op: tconv
+      factor: 2
+      residual: bilinear
+    block_1:
+      block: SingleConv
+      norm: layer
+      count: 2
+      hc: [512, 512]
+  # --- REFINER SETTINGS ---
+  # extra refiner block after Local Attender
+  refiner:
+    enc_resample: nearest
+    # (optional) noise channel concatentation for VAE UPLiFT
+    ncat_c: 4
+    ncat_s: 1
+    # refiner connection (which encoder features to link to)
+    ref_con: -1
+    # processing blocks
+    block_0:
+      block: SingleConv
+      norm: layer
+      count: 12
+      hc: [512, 512, 512, 512, 512, 512, 512, 512, 512, 512, 512, 512]
+
+# ===== TRAINING =====
+train:
+  imsize: 1024
+  loss: l2
+  lr: 0.001
+  epochs: 5
+  save_every: 1
+  batch_size: 1
+  # keep the n most recent checkpoints
+  keep_n: 5
+  # how many downsampling/upsampling levels to include in training
+  down_steps: 4
+  # train with only the deepest step/depth
+  only_deepest: False
+  # run iterative steps during training
+  multi_step: True
+  # latent-space noising augmentation: adds random Gaussian noise of specified magnitude to latents before UPLiFT module
+  lat_aug: 1
