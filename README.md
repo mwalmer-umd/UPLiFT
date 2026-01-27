@@ -4,7 +4,7 @@
 
 This is the official code for "UPLiFT: Efficient Pixel-Dense Feature Upsampling with Local Attenders" a lightweight method to upscale the features of pretrained backbones to create pixel-dense features. This repository includes sample code to run pretrained UPLiFT models for several backbones, and training code to create UPLiFT models for new backbones.
 
-Paper: *Coming Soon*
+Paper: https://arxiv.org/abs/2601.17950
 
 Website: https://www.cs.umd.edu/~mwalmer/uplift/
 
@@ -128,4 +128,13 @@ Distributed under the MIT License.
 
 ## Citation
 
-If you found UPLiFT useful, please cite our paper with the following: *Coming Soon*
+If you found UPLiFT useful, please cite our paper with the following:
+
+```
+@article{walmer2026uplift,
+  title={UPLiFT: Efficient Pixel-Dense Feature Upsampling with Local Attenders},
+  author={Walmer, Matthew and Suri, Saksham and Aggarwal, Anirud and Shrivastava, Abhinav},
+  journal={arXiv preprint arXiv:2601.17950},
+  year={2026}
+}
+```
