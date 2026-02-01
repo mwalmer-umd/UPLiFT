@@ -64,6 +64,9 @@ model = torch.hub.load('mwalmer-umd/UPLiFT', 'uplift_dinov2_s14', include_extrac
 
 # Custom iterations
 model = torch.hub.load('mwalmer-umd/UPLiFT', 'uplift_dinov2_s14', iters=2)
+
+# Activate lower memory mode for Local Attender, using serial neighborhood pooling instead of parallel pooling
+model = torch.hub.load('mwalmer-umd/UPLiFT', 'uplift_dinov2_s14', iters=4, low_mem=True)
 ```
 
 ## Inference with Pretrained Models
@@ -83,6 +86,11 @@ python sample_inference.py --pretrained uplift_dinov2-s14 --image imgs/Gigi_2_44
 Upsample an image with a pretrained UPLiFT trained for the SD1.5 VAE backbone:
 ```
 python sample_inference.py --pretrained uplift_sd1.5vae --image imgs/Gigi_3_512.png --iters 2
+```
+
+Try enabling low-memory mode, which sacrifices some speed for lower max memory usage. The model will give equivalent outputs.
+```
+python sample_inference.py --pretrained uplift_dinov3-splus16 --image imgs/Gigi_1_512.png --iters 4 --low_mem
 ```
 
 If you train a new UPLiFT model for an existing supported backbone or a new backbone, you can manually specify the path to the config and ckpt for it and run inference as follows:
