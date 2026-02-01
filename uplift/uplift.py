@@ -535,18 +535,21 @@ class UPLiFTDecoder(nn.Module):
 
 
 class UPLiFT(nn.Module):
-    def __init__(self, in_channels, patch_size, cfg, dtype: torch.dtype = torch.float32):
+    def __init__(self, in_channels, patch_size, cfg, dtype: torch.dtype = torch.float32, low_mem=False):
         super().__init__()
         self.in_channels = in_channels
         self.patch_size = patch_size
         self.cfg = cfg
         self.up_factor = self.cfg.up_factor
         self.target_dtype = dtype
+        self.low_mem = low_mem
 
         # attender formulation
         self.using_attender = False
         if hasattr(self.cfg, 'attender') and self.cfg.attender != -1:
             self.using_attender = True
+        if not self.using_attender and self.low_mem:
+            print('WARNING: UPLiFT low-mem mode only applies when LocalAttender is used')
 
         # modules
         self.encoder = UPLiFTEncoder(3, self.cfg.encoder) # note: assumes image channels == 3
@@ -554,7 +557,7 @@ class UPLiFT(nn.Module):
         self.decoder = UPLiFTDecoder(self.in_channels, self.in_channels, self.cfg.decoder, enc_channels, using_attender=self.using_attender)
         self.attender = None
         if self.using_attender:
-            self.attender = LocalAttender(self.decoder.out_channels, self.cfg.attender)
+            self.attender = LocalAttender(self.decoder.out_channels, self.cfg.attender, low_mem=self.low_mem)
 
         # encoder sharing mode: when enabled and when running iterative inference, will use a single encoder pass for multiple decoder steps
         self.enc_share = getattr(self.cfg, 'enc_share', False)
@@ -722,6 +725,7 @@ SETTINGS:
 in_channels   - The channel depth of the "guide" feature map input
 num_connected - The size of the local neighborhood to attend over
 conv_res      - Enable/disable residual connection on 1x1 conv layer
+low_mem       - Enable/disable low-memory mode, which sacrifices speed for lower max memory
 
 Guide high-res feature map input is of shape:
 [Batch, H_high, W_high, C_g]
@@ -734,7 +738,7 @@ Output map is of shape:
 [Batch, H_high, W_high, C_v]
 """
 class LocalAttender(nn.Module):
-    def __init__(self, in_channels, num_connected=5, conv_res=True):
+    def __init__(self, in_channels, num_connected=5, conv_res=True, low_mem=False):
         super().__init__()
         self.in_channels = in_channels
         self.num_connected = num_connected
@@ -762,6 +766,8 @@ class LocalAttender(nn.Module):
         self.conv_res = conv_res
         # padding
         self.pad = nn.ReplicationPad2d(self.pn)
+        # low mem mode
+        self.low_mem = low_mem
 
 
     # visualize the offset map for the given setting
@@ -824,7 +830,18 @@ class LocalAttender(nn.Module):
         att= torch.unsqueeze(att, dim=1) # -> [B, 1, D, H, I, W, I]
 
         # pool features
-        res = x * att # -> [B, C, D, H, I, W, I]
-        res = torch.sum(res, dim=2) # -> [B, C, H, I, W, I]
-        res = res.reshape([B, C, H_out, W_out]) # -> [B, C, H_out, W_out]
+        if not self.low_mem:
+            # normal mode - parallel pooling
+            res = x * att # -> [B, C, D, H, I, W, I]
+            res = torch.sum(res, dim=2) # -> [B, C, H, I, W, I]
+            res = res.reshape([B, C, H_out, W_out]) # -> [B, C, H_out, W_out]
+        else:
+            # low-mem mode - sequential pooling
+            res = torch.zeros([B,C,H_out,W_out]).to(x.device)
+            for d in range(self.num_connected):
+                x_d = x[:,:,d,:,:,:,:]
+                att_d = att[:,:,d,:,:,:,:]
+                res_d = x_d * att_d
+                res_d = res_d.reshape([B, C, H_out, W_out])
+                res += res_d
         return res

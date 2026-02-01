@@ -40,12 +40,12 @@ def main(args):
         # Use hub_loader to download from HuggingFace
         from uplift.hub_loader import load_model
         variant = PRETRAINED_TO_VARIANT.get(args.pretrained, args.pretrained)
-        UX = load_model(variant, pretrained=True, include_extractor=True,
-                        iters=args.iters, out_size=args.outsize, return_base_feat=True)
+        UX = load_model(variant, pretrained=True, include_extractor=True, iters=args.iters,
+                        out_size=args.outsize, return_base_feat=True, low_mem=args.low_mem)
     else:
         # Manual config/ckpt paths
-        UX = UPLiFTExtractor(cfg_path=args.config, ckpt_path=args.ckpt,
-                             iters=args.iters, out_size=args.outsize, return_base_feat=True)
+        UX = UPLiFTExtractor(cfg_path=args.config, ckpt_path=args.ckpt, iters=args.iters,
+                             out_size=args.outsize, return_base_feat=True, low_mem=args.low_mem)
     feat_uplift, feat = UX(image)
 
     #####
@@ -105,6 +105,7 @@ def parse_args():
     parser.add_argument('--iters', type=int, default=1, help='number of UPLiFT upsampling steps to perform')
     parser.add_argument('--outsize', type=int, default=None, help='force a particular output size through resizing at the end')
     parser.add_argument('--image', type=str, default=None, help='provide a path to an image to run inference on. Will run inference instead of training')
+    parser.add_argument('--low_mem', action='store_true', help='Enable/disable low-memory mode in LocalAttender, which sacrifices speed for lower max memory')
     args = parser.parse_args()
     return args
 

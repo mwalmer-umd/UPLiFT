@@ -35,12 +35,13 @@ no_transform     - Set to True to disable all preprocessing, for cases where pre
 return_steps     - Return the intermediate upsampling steps too
 return_base_feat - Return the base feature from the extractor backbone too
 silent           - Disable print statements
-auto-resize      - Automatically resize inputs if they are not a multiple of the backbone patch size
+auto_resize      - Automatically resize inputs if they are not a multiple of the backbone patch size
+low_mem          - Enable/disable low-memory mode in LocalAttender, which sacrifices speed for lower max memory
 '''
 class UPLiFTExtractor(nn.Module):
     def __init__(self, pretrained=None, cfg_path=None, ckpt_path=None, config=None, weights=None,
             iters=1, out_size=None, no_transform=False, return_steps=False, return_base_feat=False,
-            silent=False, auto_resize=True):
+            silent=False, auto_resize=True, low_mem=False):
         super().__init__()
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.iters = iters
@@ -50,6 +51,7 @@ class UPLiFTExtractor(nn.Module):
         self.return_base_feat = return_base_feat
         self.silent = silent
         self.auto_resize = auto_resize
+        self.low_mem = low_mem
 
         ##### CONFIG #####
         # Hub loader path: config and weights provided directly
@@ -104,7 +106,7 @@ class UPLiFTExtractor(nn.Module):
                 self.transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean, std)])
 
         ##### UPLiFT #####
-        self.uplift = UPLiFT(self.cfg.backbone.channel, self.cfg.backbone.patch, self.cfg.uplift)
+        self.uplift = UPLiFT(self.cfg.backbone.channel, self.cfg.backbone.patch, self.cfg.uplift, low_mem=self.low_mem)
         if self.ckpt_path is not None:
             if self.ckpt_path.endswith('.safetensors'):
                 from safetensors.torch import load_file
