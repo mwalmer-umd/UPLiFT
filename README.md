@@ -1,4 +1,4 @@
-# UPLiFT: Universal Pixel-dense Lightweight Feature Transforms
+# [CVPR 2026] UPLiFT: Universal Pixel-dense Lightweight Feature Transforms
 
 ![plot](./imgs/uplift.png)
 
