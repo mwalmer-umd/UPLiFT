@@ -40,6 +40,29 @@ import torch.nn.functional as F
 import torchvision.transforms.functional as TVF
 from torchvision import transforms
 
+from .uplift import residual_auto
+
+
+class _TritonAttenderWrapper(nn.Module):
+    """LocalAttender-compatible wrapper: projects guide via the original conv1
+    (+ optional residual), then delegates the fused weighted-sum to the Triton
+    kernel. Needed because TritonLocalAttender expects pre-projected attention
+    logits while the surrounding model passes the raw decoder output as guide.
+    """
+
+    def __init__(self, conv1: nn.Conv2d, conv_res: bool, triton: nn.Module):
+        super().__init__()
+        self.conv1 = conv1
+        self.conv_res = conv_res
+        self.triton = triton
+        self.num_connected = triton.num_connected
+
+    def forward(self, guide, value, hardmax=False):
+        att = self.conv1(guide)
+        if self.conv_res:
+            att = residual_auto(guide, att)
+        return self.triton(att, value, hardmax)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Public API
@@ -76,13 +99,22 @@ def make_fast(
     # Wrap model with optimizations
     fast = _OptimizedUPLiFT(model, device=device)
 
-    # Replace attender with Triton kernel (n=17, best for I=2, fallback for I=4)
+    # Replace attender's weighted-sum with Triton kernel (n=17, best for I=2,
+    # fallback for I=4). conv1 + conv_res from the original LocalAttender are
+    # preserved via _TritonAttenderWrapper so the attention logits still get
+    # projected from the guide before the fused sum.
     if fast.model.attender is not None:
         num_connected = fast.model.attender.num_connected
         if num_connected == 17:
             try:
                 from uplift.kernels.triton_attender import TritonLocalAttender
-                fast.model.attender = TritonLocalAttender(num_connected=17).to(device)
+                orig = fast.model.attender
+                triton_kernel = TritonLocalAttender(num_connected=17).to(device)
+                fast.model.attender = _TritonAttenderWrapper(
+                    conv1=orig.conv1,
+                    conv_res=orig.conv_res,
+                    triton=triton_kernel,
+                ).to(device).eval()
             except (ImportError, RuntimeError):
                 pass  # Triton not available; keep original attender
 

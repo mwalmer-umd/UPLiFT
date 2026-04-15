@@ -310,6 +310,7 @@ class TritonLocalAttender(nn.Module):
         self.pn = 2
         self.streaming_threshold = streaming_threshold
 
+    @torch.compiler.disable
     def forward(self, att: torch.Tensor, x: torch.Tensor, hardmax: bool = False) -> torch.Tensor:
         B, C, H, W = x.shape
         D = att.shape[1]
