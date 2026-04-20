@@ -62,7 +62,7 @@ def _download_weights(variant: str, cache_dir: str = None) -> str:
 
 
 def load_model(variant: str, pretrained: bool = True,
-               include_extractor: bool = True, **kwargs):
+               include_extractor: bool = True, fast: bool = False, **kwargs):
     """
     Load UPLiFT model.
 
@@ -71,6 +71,7 @@ def load_model(variant: str, pretrained: bool = True,
         pretrained: Load pretrained weights from HuggingFace Hub
         include_extractor: If True, return UPLiFTExtractor with backbone included.
                           If False, return raw UPLiFT model only.
+        fast: Enable optimized inference (3-5x faster on Ampere+ GPUs).
         **kwargs: Passed to UPLiFTExtractor (if include_extractor=True):
             - iters (int): Upsampling iterations (default: 4)
             - return_base_feat (bool): Return backbone features too (default: False)
@@ -95,6 +96,7 @@ def load_model(variant: str, pretrained: bool = True,
         return UPLiFTExtractor(
             config=str(config_path),
             weights=weights_path,
+            fast=fast,
             **kwargs
         )
     else:
@@ -105,4 +107,7 @@ def load_model(variant: str, pretrained: bool = True,
             from safetensors.torch import load_file
             state_dict = load_file(weights_path)
             model.load_state_dict(state_dict)
+        if fast:
+            from uplift.fast import make_fast
+            model = make_fast(model)
         return model

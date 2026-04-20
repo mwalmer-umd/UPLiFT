@@ -362,7 +362,7 @@ def noise_and_combine(x, f=None, ncat_c=0, ncat_s=1, f_resample='none'):
         x = torch.cat([x, f], dim=1)
     # (optional) generate and append noise channels
     if ncat_c > 0:
-        ncat = ncat_s * torch.randn([x.shape[0], ncat_c, x.shape[2], x.shape[3]], device=x.device)
+        ncat = ncat_s * torch.randn([x.shape[0], ncat_c, x.shape[2], x.shape[3]], device=x.device, dtype=x.dtype)
         x = torch.cat([x, ncat], dim=1)
     return x
 

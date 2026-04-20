@@ -41,7 +41,7 @@ low_mem          - Enable/disable low-memory mode in LocalAttender, which sacrif
 class UPLiFTExtractor(nn.Module):
     def __init__(self, pretrained=None, cfg_path=None, ckpt_path=None, config=None, weights=None,
             iters=1, out_size=None, no_transform=False, return_steps=False, return_base_feat=False,
-            silent=False, auto_resize=True, low_mem=False):
+            silent=False, auto_resize=True, low_mem=False, fast=False):
         super().__init__()
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.iters = iters
@@ -52,6 +52,7 @@ class UPLiFTExtractor(nn.Module):
         self.silent = silent
         self.auto_resize = auto_resize
         self.low_mem = low_mem
+        self.fast = fast
 
         ##### CONFIG #####
         # Hub loader path: config and weights provided directly
@@ -124,6 +125,15 @@ class UPLiFTExtractor(nn.Module):
             print('UPLiFT iters: ' + str(iters))
         self.uplift = self.uplift.to(self.device)
         self.uplift.eval()
+
+        ##### FAST MODE #####
+        if self.fast:
+            from uplift.fast import make_fast
+            if not self.silent:
+                print('Applying fast mode optimizations (first run will take ~30-60s for JIT compilation)...')
+            self.uplift = make_fast(self.uplift, device=torch.device(self.device))
+            if not self.silent:
+                print('Fast mode ready.')
 
 
     '''

@@ -2,7 +2,8 @@
 Sample inference script with a pretrained UPLiFT model using uplift_extractor.py.
 
 Example command:
-python sample_inference.py --pretrained uplift_dinov3-splus16 --image imgs/Gigi_1_512.png --iters 4
+python sample_inference.py --pretrained uplift_dinov2-s14 --image imgs/sample.jpg --iters 4
+python sample_inference.py --pretrained uplift_dinov2-s14 --image imgs/sample.jpg --iters 4 --fast
 
 Code by: Matthew Walmer and Anirud Aggarwal
 """
@@ -40,12 +41,14 @@ def main(args):
         # Use hub_loader to download from HuggingFace
         from uplift.hub_loader import load_model
         variant = PRETRAINED_TO_VARIANT.get(args.pretrained, args.pretrained)
-        UX = load_model(variant, pretrained=True, include_extractor=True, iters=args.iters,
-                        out_size=args.outsize, return_base_feat=True, low_mem=args.low_mem)
+        UX = load_model(variant, pretrained=True, include_extractor=True, fast=args.fast,
+                        iters=args.iters, out_size=args.outsize, return_base_feat=True,
+                        low_mem=args.low_mem)
     else:
         # Manual config/ckpt paths
-        UX = UPLiFTExtractor(cfg_path=args.config, ckpt_path=args.ckpt, iters=args.iters,
-                             out_size=args.outsize, return_base_feat=True, low_mem=args.low_mem)
+        UX = UPLiFTExtractor(cfg_path=args.config, ckpt_path=args.ckpt, fast=args.fast,
+                             iters=args.iters, out_size=args.outsize, return_base_feat=True,
+                             low_mem=args.low_mem)
     feat_uplift, feat = UX(image)
 
     #####
@@ -106,6 +109,7 @@ def parse_args():
     parser.add_argument('--outsize', type=int, default=None, help='force a particular output size through resizing at the end')
     parser.add_argument('--image', type=str, default=None, help='provide a path to an image to run inference on. Will run inference instead of training')
     parser.add_argument('--low_mem', action='store_true', help='Enable/disable low-memory mode in LocalAttender, which sacrifices speed for lower max memory')
+    parser.add_argument('--fast', action='store_true', help='Enable optimized inference (3-5x faster on Ampere+ GPUs). First run takes ~30-60s for JIT compilation.')
     args = parser.parse_args()
     return args
 
