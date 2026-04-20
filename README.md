@@ -8,6 +8,13 @@ Paper: https://arxiv.org/abs/2601.17950
 
 Website: https://www.cs.umd.edu/~mwalmer/uplift/
 
+## Updates
+
+* **4/20/26:** UPLiFT **Fast Mode** now released! We’ve added several performance optimizations to further accelerate our existing UPLiFT models while also reducing memory usage. See details below.
+* **2/21/26:** We’re happy to announce that UPLiFT has been accepted to CVPR 2026!
+* **2/1/26:** Extra running options added, see details below.
+* **1/25/26:** Initial release of UPLiFT!
+
 ## Installation
 
 First, create and activate a conda environment:
@@ -56,7 +63,24 @@ features = model(image)
 | DINOv3-S+/16 | ViT | `uplift_dinov3_splus16` |
 | SD 1.5 VAE | Diffusion | `uplift_sd15_vae` |
 
-## Options
+## Fast Mode
+
+Enable **Fast Mode** to activate several optimizations that increase UPLiFT’s speed and reduce its memory usage. The final outputs will be nearly identical to the results running without Fast Mode, and we find that performance in downstream tasks is also nearly identical. Note that the first call with Fast Mode will take slightly longer for compilation, but subsequent runs will use cached kernels. See FAST_MODE.md for more details.
+
+PyTorch Hub usage:
+
+```python
+model = torch.hub.load('mwalmer-umd/UPLiFT', 'uplift_dinov2_s14', fast=True)
+features = model(image)
+```
+
+Command-line usage:
+
+```
+python sample_inference.py --pretrained uplift_dinov2-s14 --image img.png --fast
+```
+
+## More Options
 
 ```python
 # Raw model only (no backbone)
