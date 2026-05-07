@@ -25,6 +25,8 @@ import torch.nn.functional as F
 import triton
 import triton.language as tl
 
+_INT32_MAX = 2_147_483_647
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Kernel A: Cell-tiled kernel (best for small H, matches v2 performance)
@@ -44,6 +46,7 @@ def _v3_cell_tiled_kernel(
     val_stride_h: tl.constexpr, val_stride_w: tl.constexpr,
     out_stride_b: tl.constexpr, out_stride_c: tl.constexpr,
     out_stride_h: tl.constexpr, out_stride_w: tl.constexpr,
+    USE_I64_OFFSETS: tl.constexpr,
     BLOCK_C: tl.constexpr,
 ):
     pid_c = tl.program_id(0)
@@ -58,6 +61,11 @@ def _v3_cell_tiled_kernel(
     c_mask = c_offs < C
 
     val_base = b * val_stride_b + c_offs * val_stride_c
+    if USE_I64_OFFSETS:
+        out_batch_base = b.to(tl.int64) * out_stride_b
+    else:
+        out_batch_base = b * out_stride_b
+    out_c = c_offs * out_stride_c
 
     # Load 17 neighbor values (native dtype; promoted to fp32 during weighted sum)
     v0  = tl.load(val_ptr + val_base + (h_lr+0)*val_stride_h + (w_lr+0)*val_stride_w, mask=c_mask, other=0.0)
@@ -131,7 +139,11 @@ def _v3_cell_tiled_kernel(
             acc += (e12*inv_s)*v12 + (e13*inv_s)*v13 + (e14*inv_s)*v14
             acc += (e15*inv_s)*v15 + (e16*inv_s)*v16
 
-            out_off = b * out_stride_b + c_offs * out_stride_c + h_out * out_stride_h + w_out * out_stride_w
+            if USE_I64_OFFSETS:
+                out_spatial = h_out.to(tl.int64) * out_stride_h + w_out.to(tl.int64) * out_stride_w
+            else:
+                out_spatial = h_out * out_stride_h + w_out * out_stride_w
+            out_off = out_batch_base + out_spatial + out_c
             tl.store(out_ptr + out_off, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
 
 
@@ -153,7 +165,7 @@ def _autotune_configs_nhwc_streaming():
     return configs
 
 
-@triton.autotune(configs=_autotune_configs_nhwc_streaming(), key=['C', 'H', 'W'])
+@triton.autotune(configs=_autotune_configs_nhwc_streaming(), key=['C', 'H', 'W', 'USE_I64_OFFSETS'])
 @triton.jit
 def _v3_nhwc_streaming_kernel(
     att_ptr,   # [B, 17, H_out, W_out] — NCHW
@@ -170,6 +182,7 @@ def _v3_nhwc_streaming_kernel(
     out_stride_b: tl.constexpr, out_stride_h: tl.constexpr,
     out_stride_w: tl.constexpr, out_stride_c: tl.constexpr,
     num_cells: tl.constexpr,
+    USE_I64_OFFSETS: tl.constexpr,
     BLOCK_C: tl.constexpr,
 ):
     """
@@ -187,6 +200,14 @@ def _v3_nhwc_streaming_kernel(
 
     h_out_base = h_lr * 2
     w_out_base = w_lr * 2
+    if USE_I64_OFFSETS:
+        out_base = (
+            b.to(tl.int64) * out_stride_b
+            + h_out_base.to(tl.int64) * out_stride_h
+            + w_out_base.to(tl.int64) * out_stride_w
+        )
+    else:
+        out_base = b * out_stride_b + h_out_base * out_stride_h + w_out_base * out_stride_w
 
     # Precompute softmax weights for all 4 sub-pixels (68 fp32 scalars in registers)
     att_base_00 = b * att_stride_b + (h_out_base + 0) * att_stride_h + (w_out_base + 0) * att_stride_w
@@ -206,6 +227,7 @@ def _v3_nhwc_streaming_kernel(
     for c_block_idx in range(num_c_blocks):
         c_offs = c_block_idx * BLOCK_C + tl.arange(0, BLOCK_C)
         c_mask = c_offs < C
+        out_c = c_offs * out_stride_c
 
         val_base = b * val_stride_b + c_offs * val_stride_c
 
@@ -231,19 +253,19 @@ def _v3_nhwc_streaming_kernel(
         # Weighted sum + store for 4 sub-pixels
         # Sub-pixel (0,0)
         acc = w00_0*v0 + w00_1*v1 + w00_2*v2 + w00_3*v3 + w00_4*v4 + w00_5*v5 + w00_6*v6 + w00_7*v7 + w00_8*v8 + w00_9*v9 + w00_10*v10 + w00_11*v11 + w00_12*v12 + w00_13*v13 + w00_14*v14 + w00_15*v15 + w00_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+0)*out_stride_h + (w_out_base+0)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
 
         # Sub-pixel (0,1)
         acc = w01_0*v0 + w01_1*v1 + w01_2*v2 + w01_3*v3 + w01_4*v4 + w01_5*v5 + w01_6*v6 + w01_7*v7 + w01_8*v8 + w01_9*v9 + w01_10*v10 + w01_11*v11 + w01_12*v12 + w01_13*v13 + w01_14*v14 + w01_15*v15 + w01_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+0)*out_stride_h + (w_out_base+1)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
 
         # Sub-pixel (1,0)
         acc = w10_0*v0 + w10_1*v1 + w10_2*v2 + w10_3*v3 + w10_4*v4 + w10_5*v5 + w10_6*v6 + w10_7*v7 + w10_8*v8 + w10_9*v9 + w10_10*v10 + w10_11*v11 + w10_12*v12 + w10_13*v13 + w10_14*v14 + w10_15*v15 + w10_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+1)*out_stride_h + (w_out_base+0)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + out_stride_h + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
 
         # Sub-pixel (1,1)
         acc = w11_0*v0 + w11_1*v1 + w11_2*v2 + w11_3*v3 + w11_4*v4 + w11_5*v5 + w11_6*v6 + w11_7*v7 + w11_8*v8 + w11_9*v9 + w11_10*v10 + w11_11*v11 + w11_12*v12 + w11_13*v13 + w11_14*v14 + w11_15*v15 + w11_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+1)*out_stride_h + (w_out_base+1)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + out_stride_h + out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
 
 
 @triton.jit
@@ -347,6 +369,7 @@ class TritonLocalAttender(nn.Module):
                 x_pad_nhwc.stride(0), x_pad_nhwc.stride(2), x_pad_nhwc.stride(3), x_pad_nhwc.stride(1),
                 out_nhwc.stride(0), out_nhwc.stride(2), out_nhwc.stride(3), out_nhwc.stride(1),
                 num_cells,
+                USE_I64_OFFSETS=out_nhwc.numel() > _INT32_MAX,
             )
             return out_nhwc.contiguous()
         else:
@@ -363,6 +386,7 @@ class TritonLocalAttender(nn.Module):
                 att.stride(0), att.stride(1), att.stride(2), att.stride(3),
                 x_pad.stride(0), x_pad.stride(1), x_pad.stride(2), x_pad.stride(3),
                 out.stride(0), out.stride(1), out.stride(2), out.stride(3),
+                USE_I64_OFFSETS=out.numel() > _INT32_MAX,
                 BLOCK_C=BLOCK_C,
             )
             return out
@@ -405,6 +429,3 @@ class TritonLocalAttender(nn.Module):
 
         res = (x_stacked * att_weights).sum(dim=2)  # [B, C, H, I, W, I]
         return res.reshape(B, C, H_out, W_out)
-
-
-
