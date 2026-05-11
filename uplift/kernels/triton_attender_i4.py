@@ -18,6 +18,8 @@ import torch.nn.functional as F
 import triton
 import triton.language as tl
 
+_INT32_MAX = 2_147_483_647
+
 # n=17 offsets: (-2,-2),(-2,0),(-2,2),(-1,-1),(-1,0),(-1,1),(0,-2),(0,-1),
 #               (0,0),(0,1),(0,2),(1,-1),(1,0),(1,1),(2,-2),(2,0),(2,2)
 # Padding = 2 (max offset magnitude)
@@ -42,6 +44,7 @@ def _v3_cell_tiled_i4_kernel(
     val_stride_h: tl.constexpr, val_stride_w: tl.constexpr,
     out_stride_b: tl.constexpr, out_stride_c: tl.constexpr,
     out_stride_h: tl.constexpr, out_stride_w: tl.constexpr,
+    USE_I64_OFFSETS: tl.constexpr,
     BLOCK_C: tl.constexpr,
 ):
     pid_c = tl.program_id(0)
@@ -56,6 +59,11 @@ def _v3_cell_tiled_i4_kernel(
     c_mask = c_offs < C
 
     val_base = b * val_stride_b + c_offs * val_stride_c
+    if USE_I64_OFFSETS:
+        out_batch_base = b.to(tl.int64) * out_stride_b
+    else:
+        out_batch_base = b * out_stride_b
+    out_c = c_offs * out_stride_c
 
     # ─── Load 17 neighbor values (shared across 4×4=16 output pixels) ───
     # Padded coordinates: (h_lr + PN + oh, w_lr + PN + ow) where PN=2
@@ -130,7 +138,11 @@ def _v3_cell_tiled_i4_kernel(
             acc += (e12*inv_s)*v12 + (e13*inv_s)*v13 + (e14*inv_s)*v14
             acc += (e15*inv_s)*v15 + (e16*inv_s)*v16
 
-            out_off = b * out_stride_b + c_offs * out_stride_c + h_out * out_stride_h + w_out * out_stride_w
+            if USE_I64_OFFSETS:
+                out_spatial = h_out.to(tl.int64) * out_stride_h + w_out.to(tl.int64) * out_stride_w
+            else:
+                out_spatial = h_out * out_stride_h + w_out * out_stride_w
+            out_off = out_batch_base + out_spatial + out_c
             tl.store(out_ptr + out_off, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
 
 
@@ -194,7 +206,7 @@ def _load_softmax_weights_17(att_ptr, att_base, att_stride_d):
             e12*inv_s, e13*inv_s, e14*inv_s, e15*inv_s, e16*inv_s)
 
 
-@triton.autotune(configs=_autotune_configs_i4(), key=['C', 'H', 'W'])
+@triton.autotune(configs=_autotune_configs_i4(), key=['C', 'H', 'W', 'USE_I64_OFFSETS'])
 @triton.jit
 def _v3_nhwc_streaming_i4_kernel(
     att_ptr,   # [B, 17, H_out, W_out] — NCHW
@@ -211,6 +223,7 @@ def _v3_nhwc_streaming_i4_kernel(
     out_stride_b: tl.constexpr, out_stride_h: tl.constexpr,
     out_stride_w: tl.constexpr, out_stride_c: tl.constexpr,
     num_cells: tl.constexpr,
+    USE_I64_OFFSETS: tl.constexpr,
     BLOCK_C: tl.constexpr,
 ):
     """
@@ -227,6 +240,14 @@ def _v3_nhwc_streaming_i4_kernel(
 
     h_out_base = h_lr * 4
     w_out_base = w_lr * 4
+    if USE_I64_OFFSETS:
+        out_base = (
+            b.to(tl.int64) * out_stride_b
+            + h_out_base.to(tl.int64) * out_stride_h
+            + w_out_base.to(tl.int64) * out_stride_w
+        )
+    else:
+        out_base = b * out_stride_b + h_out_base * out_stride_h + w_out_base * out_stride_w
 
     # Precompute softmax weights for all 16 sub-pixels (272 fp32 scalars)
     # Row 0: sub-pixels (0,0), (0,1), (0,2), (0,3)
@@ -274,6 +295,7 @@ def _v3_nhwc_streaming_i4_kernel(
     for c_block_idx in range(num_c_blocks):
         c_offs = c_block_idx * BLOCK_C + tl.arange(0, BLOCK_C)
         c_mask = c_offs < C
+        out_c = c_offs * out_stride_c
 
         val_base = b * val_stride_b + c_offs * val_stride_c
 
@@ -299,43 +321,43 @@ def _v3_nhwc_streaming_i4_kernel(
         # Weighted sum + store for all 16 sub-pixels
         # Row 0
         acc = w00_0*v0+w00_1*v1+w00_2*v2+w00_3*v3+w00_4*v4+w00_5*v5+w00_6*v6+w00_7*v7+w00_8*v8+w00_9*v9+w00_10*v10+w00_11*v11+w00_12*v12+w00_13*v13+w00_14*v14+w00_15*v15+w00_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+0)*out_stride_h + (w_out_base+0)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w01_0*v0+w01_1*v1+w01_2*v2+w01_3*v3+w01_4*v4+w01_5*v5+w01_6*v6+w01_7*v7+w01_8*v8+w01_9*v9+w01_10*v10+w01_11*v11+w01_12*v12+w01_13*v13+w01_14*v14+w01_15*v15+w01_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+0)*out_stride_h + (w_out_base+1)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w02_0*v0+w02_1*v1+w02_2*v2+w02_3*v3+w02_4*v4+w02_5*v5+w02_6*v6+w02_7*v7+w02_8*v8+w02_9*v9+w02_10*v10+w02_11*v11+w02_12*v12+w02_13*v13+w02_14*v14+w02_15*v15+w02_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+0)*out_stride_h + (w_out_base+2)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + 2*out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w03_0*v0+w03_1*v1+w03_2*v2+w03_3*v3+w03_4*v4+w03_5*v5+w03_6*v6+w03_7*v7+w03_8*v8+w03_9*v9+w03_10*v10+w03_11*v11+w03_12*v12+w03_13*v13+w03_14*v14+w03_15*v15+w03_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+0)*out_stride_h + (w_out_base+3)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + 3*out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
 
         # Row 1
         acc = w10_0*v0+w10_1*v1+w10_2*v2+w10_3*v3+w10_4*v4+w10_5*v5+w10_6*v6+w10_7*v7+w10_8*v8+w10_9*v9+w10_10*v10+w10_11*v11+w10_12*v12+w10_13*v13+w10_14*v14+w10_15*v15+w10_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+1)*out_stride_h + (w_out_base+0)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + out_stride_h + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w11_0*v0+w11_1*v1+w11_2*v2+w11_3*v3+w11_4*v4+w11_5*v5+w11_6*v6+w11_7*v7+w11_8*v8+w11_9*v9+w11_10*v10+w11_11*v11+w11_12*v12+w11_13*v13+w11_14*v14+w11_15*v15+w11_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+1)*out_stride_h + (w_out_base+1)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + out_stride_h + out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w12_0*v0+w12_1*v1+w12_2*v2+w12_3*v3+w12_4*v4+w12_5*v5+w12_6*v6+w12_7*v7+w12_8*v8+w12_9*v9+w12_10*v10+w12_11*v11+w12_12*v12+w12_13*v13+w12_14*v14+w12_15*v15+w12_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+1)*out_stride_h + (w_out_base+2)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + out_stride_h + 2*out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w13_0*v0+w13_1*v1+w13_2*v2+w13_3*v3+w13_4*v4+w13_5*v5+w13_6*v6+w13_7*v7+w13_8*v8+w13_9*v9+w13_10*v10+w13_11*v11+w13_12*v12+w13_13*v13+w13_14*v14+w13_15*v15+w13_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+1)*out_stride_h + (w_out_base+3)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + out_stride_h + 3*out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
 
         # Row 2
         acc = w20_0*v0+w20_1*v1+w20_2*v2+w20_3*v3+w20_4*v4+w20_5*v5+w20_6*v6+w20_7*v7+w20_8*v8+w20_9*v9+w20_10*v10+w20_11*v11+w20_12*v12+w20_13*v13+w20_14*v14+w20_15*v15+w20_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+2)*out_stride_h + (w_out_base+0)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + 2*out_stride_h + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w21_0*v0+w21_1*v1+w21_2*v2+w21_3*v3+w21_4*v4+w21_5*v5+w21_6*v6+w21_7*v7+w21_8*v8+w21_9*v9+w21_10*v10+w21_11*v11+w21_12*v12+w21_13*v13+w21_14*v14+w21_15*v15+w21_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+2)*out_stride_h + (w_out_base+1)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + 2*out_stride_h + out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w22_0*v0+w22_1*v1+w22_2*v2+w22_3*v3+w22_4*v4+w22_5*v5+w22_6*v6+w22_7*v7+w22_8*v8+w22_9*v9+w22_10*v10+w22_11*v11+w22_12*v12+w22_13*v13+w22_14*v14+w22_15*v15+w22_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+2)*out_stride_h + (w_out_base+2)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + 2*out_stride_h + 2*out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w23_0*v0+w23_1*v1+w23_2*v2+w23_3*v3+w23_4*v4+w23_5*v5+w23_6*v6+w23_7*v7+w23_8*v8+w23_9*v9+w23_10*v10+w23_11*v11+w23_12*v12+w23_13*v13+w23_14*v14+w23_15*v15+w23_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+2)*out_stride_h + (w_out_base+3)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + 2*out_stride_h + 3*out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
 
         # Row 3
         acc = w30_0*v0+w30_1*v1+w30_2*v2+w30_3*v3+w30_4*v4+w30_5*v5+w30_6*v6+w30_7*v7+w30_8*v8+w30_9*v9+w30_10*v10+w30_11*v11+w30_12*v12+w30_13*v13+w30_14*v14+w30_15*v15+w30_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+3)*out_stride_h + (w_out_base+0)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + 3*out_stride_h + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w31_0*v0+w31_1*v1+w31_2*v2+w31_3*v3+w31_4*v4+w31_5*v5+w31_6*v6+w31_7*v7+w31_8*v8+w31_9*v9+w31_10*v10+w31_11*v11+w31_12*v12+w31_13*v13+w31_14*v14+w31_15*v15+w31_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+3)*out_stride_h + (w_out_base+1)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + 3*out_stride_h + out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w32_0*v0+w32_1*v1+w32_2*v2+w32_3*v3+w32_4*v4+w32_5*v5+w32_6*v6+w32_7*v7+w32_8*v8+w32_9*v9+w32_10*v10+w32_11*v11+w32_12*v12+w32_13*v13+w32_14*v14+w32_15*v15+w32_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+3)*out_stride_h + (w_out_base+2)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + 3*out_stride_h + 2*out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
         acc = w33_0*v0+w33_1*v1+w33_2*v2+w33_3*v3+w33_4*v4+w33_5*v5+w33_6*v6+w33_7*v7+w33_8*v8+w33_9*v9+w33_10*v10+w33_11*v11+w33_12*v12+w33_13*v13+w33_14*v14+w33_15*v15+w33_16*v16
-        tl.store(out_ptr + b*out_stride_b + (h_out_base+3)*out_stride_h + (w_out_base+3)*out_stride_w + c_offs*out_stride_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
+        tl.store(out_ptr + out_base + 3*out_stride_h + 3*out_stride_w + out_c, acc.to(out_ptr.dtype.element_ty), mask=c_mask)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -395,6 +417,7 @@ class TritonLocalAttenderI4(nn.Module):
                 x_pad_nhwc.stride(0), x_pad_nhwc.stride(2), x_pad_nhwc.stride(3), x_pad_nhwc.stride(1),
                 out_nhwc.stride(0), out_nhwc.stride(2), out_nhwc.stride(3), out_nhwc.stride(1),
                 num_cells,
+                USE_I64_OFFSETS=out_nhwc.numel() > _INT32_MAX,
             )
             return out_nhwc.contiguous()
         else:
@@ -411,6 +434,7 @@ class TritonLocalAttenderI4(nn.Module):
                 att.stride(0), att.stride(1), att.stride(2), att.stride(3),
                 x_pad.stride(0), x_pad.stride(1), x_pad.stride(2), x_pad.stride(3),
                 out.stride(0), out.stride(1), out.stride(2), out.stride(3),
+                USE_I64_OFFSETS=out.numel() > _INT32_MAX,
                 BLOCK_C=BLOCK_C,
             )
             return out
