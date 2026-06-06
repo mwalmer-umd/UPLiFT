@@ -4,7 +4,10 @@ backbones for easy feature extraction and upsampling.
 
 Code by: Anirud Aggarwal
 """
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+import re
+
 from huggingface_hub import hf_hub_download
 from omegaconf import OmegaConf
 
@@ -25,6 +28,7 @@ VARIANTS = {
         "config": "uplift_dinov3-splus16.yaml",
         "extra": "vit",
         "check_package": "timm",
+        "min_version": "1.0.24",
     },
     "sd15-vae": {
         "hf_repo": "uplift_sd1.5vae",
@@ -36,14 +40,46 @@ VARIANTS = {
 }
 
 
+def _get_installed_version(package: str) -> str:
+    return version(package)
+
+
+def _parse_version(value: str) -> tuple[int, ...]:
+    parts = []
+    for part in value.split("."):
+        match = re.match(r"(\d+)", part)
+        if not match:
+            break
+        parts.append(int(match.group(1)))
+    return tuple(parts)
+
+
+def _is_version_at_least(installed: str, minimum: str) -> bool:
+    installed_parts = _parse_version(installed)
+    minimum_parts = _parse_version(minimum)
+    length = max(len(installed_parts), len(minimum_parts))
+    installed_parts += (0,) * (length - len(installed_parts))
+    minimum_parts += (0,) * (length - len(minimum_parts))
+    return installed_parts >= minimum_parts
+
+
 def _check_dependencies(variant: str):
     info = VARIANTS[variant]
+    package = info["check_package"]
     try:
-        __import__(info["check_package"])
-    except ImportError:
+        installed_version = _get_installed_version(package)
+    except PackageNotFoundError:
         raise ImportError(
-            f"'{variant}' requires '{info['check_package']}'. "
+            f"'{variant}' requires '{package}'. "
             f"Install with: pip install uplift[{info['extra']}]"
+        )
+
+    min_version = info.get("min_version")
+    if min_version and not _is_version_at_least(installed_version, min_version):
+        raise ImportError(
+            f"'{variant}' requires '{package}>={min_version}', but found "
+            f"'{package}=={installed_version}'. "
+            f"Upgrade with: pip install -U 'uplift[{info['extra']}]'"
         )
 
 
