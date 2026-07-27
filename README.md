@@ -2,14 +2,16 @@
 
 ![plot](./imgs/uplift.png)
 
-This is the official code for "UPLiFT: Efficient Pixel-Dense Feature Upsampling with Local Attenders" a lightweight method to upscale the features of pretrained backbones to create pixel-dense features. This repository includes sample code to run pretrained UPLiFT models for several backbones, and training code to create UPLiFT models for new backbones.
+This is the official code for "**UPLiFT: Efficient Pixel-Dense Feature Upsampling with Local Attenders**" a lightweight method to upscale the features of pretrained backbones to create pixel-dense features. This repository includes sample code to run pretrained UPLiFT models for several backbones, and training code to create UPLiFT models for new backbones.
 
-Paper: https://arxiv.org/abs/2601.17950
-
-Website: https://www.cs.umd.edu/~mwalmer/uplift/
+<a href='https://openaccess.thecvf.com/content/CVPR2026/html/Walmer_UPLiFT_Efficient_Pixel-Dense_Feature_Upsampling_with_Local_Attenders_CVPR_2026_paper.html'><img src='https://img.shields.io/badge/Paper-UPLiFT-blue' alt='paper'></a>
+<a href='https://arxiv.org/abs/2601.17950'><img src='https://img.shields.io/badge/arXiv-UPLiFT-red' alt='arXiv paper'></a>
+<a href='https://www.cs.umd.edu/~mwalmer/uplift/'><img src='https://img.shields.io/badge/Project_Page-UPLiFT-green' alt='Project Page'></a>
+<a href='https://huggingface.co/UPLiFT-upsampler'><img src='https://img.shields.io/badge/Hugging_Face-UPLiFT-yellow' alt='Hugging Face'></a>
 
 ## Updates
 
+* **7/27/26:** We’ve updated our arXiv publication with additional comparisons and UPLiFT Fast Mode ([link](https://arxiv.org/abs/2601.17950))
 * **4/20/26:** UPLiFT **Fast Mode** now released! We’ve added several performance optimizations to further accelerate our existing UPLiFT models while also reducing memory usage. See details below.
 * **2/21/26:** We’re happy to announce that UPLiFT has been accepted to CVPR 2026!
 * **2/1/26:** Extra running options added, see details below.
